@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <title>vector tile map made with Tegola and Maplibre</title>
+    <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
+    <script src="https://unpkg.com/maplibre-gl@2.1.9/dist/maplibre-gl.js"></script>
+    <link href="https://unpkg.com/maplibre-gl@2.1.9/dist/maplibre-gl.css" rel="stylesheet" />
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+        }
+
+        #map {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 100%;
+        }
+
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: white;
+            padding: 10px;
+        }
+    </style>
+    <script src="https://unpkg.com/@maplibre/maplibre-gl-geocoder@1.2.0/dist/maplibre-gl-geocoder.min.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/@maplibre/maplibre-gl-geocoder@1.2.0/dist/maplibre-gl-geocoder.css"
+        type="text/css" />
+</head>
+
+<body>
+    <div id="map"></div>
+    <div id="info">Click on the map to get address</div>
+    <script>
+        let mapConfig = {
+            'container': 'map',
+            'hash': true,
+            'style': {
+                'version': 8,
+                'sources': {
+                    'carto-light': {
+                        'type': 'raster',
+                        'tiles': [
+                            "https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png",
+                            "https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png",
+                            "https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png",
+                            "https://d.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png"
+                        ]
+                    }
+                },
+                'layers': [{
+                    'id': 'carto-light-layer',
+                    'source': 'carto-light',
+                    'type': 'raster',
+                    'minzoom': 0,
+                    'maxzoom': 22
+                }]
+            },
+            'center': [-73.9021, 40.786],
+            'zoom': 9,
+            //   'pitch': 20        
+        };
+        var map = new maplibregl.Map(mapConfig)
+
+        map.addControl(new maplibregl.NavigationControl());
+        let markers = [];
+        map.setMaxZoom(19);
+        var geocoder_api = {
+            forwardGeocode: async (config) => {
+                const query = config.query;
+                // Check if the query is in "lat,lng" format for reverse geocoding
+                const coords = query.split(',').map(str => parseFloat(str.trim()));
+                if (coords.length === 2 && !isNaN(coords[0]) && !isNaN(coords[1])) {
+                    const result = await reverseGeocode(coords[1], coords[0]);
+                    return {
+                        features: [{
+                            center: [coords[0], coords[1]],
+                            place_name: result,
+                            geometry: {
+                                type: 'Point',
+                                coordinates: [coords[0], coords[1]]
+                            },
+                            place_type: ['place'],
+                            text: result,
+                            properties: {}
+                        }]
+                    };
+                }
+                else {
+                    const features = [];
+                    try {
+                        let request =
+                            'https://nominatim.openstreetmap.org/search?q=' +
+                            config.query +
+                            '&format=geojson&polygon_geojson=1&addressdetails=1';
+                        const response = await fetch(request);
+                        const geojson = await response.json();
+                        for (let feature of geojson.features) {
+                            let center = [
+                                feature.bbox[0] +
+                                (feature.bbox[2] - feature.bbox[0]) / 2,
+                                feature.bbox[1] +
+                                (feature.bbox[3] - feature.bbox[1]) / 2
+                            ];
+                            let point = {
+                                type: 'Feature',
+                                geometry: {
+                                    type: 'Point',
+                                    coordinates: center
+                                },
+                                place_name: feature.properties.display_name,
+                                properties: feature.properties,
+                                text: feature.properties.display_name,
+                                place_type: ['place'],
+                                center: center
+                            };
+                            features.push(point);
+                        }
+                    } catch (e) {
+                        console.error(`Failed to forwardGeocode with error: ${e}`);
+                    }
+
+                    return {
+                        features: features
+                    };
+                }
+
+            }
+        };
+        map.addControl(
+            new MaplibreGeocoder(geocoder_api, {
+                maplibregl: maplibregl
+            })
+        );
+
+        // Function to perform reverse geocoding
+        async function reverseGeocode(lng, lat) {
+            const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`;
+            const response = await fetch(url);
+            if (response.ok) {
+                const data = await response.json();
+                return data.display_name;
+            } else {
+                throw new Error('Failed to fetch reverse geocoding data');
+            }
+        }
+
+        // Add a click event listener on the map
+        map.on('click', async (event) => {
+            clearMarkers()
+            const { lng, lat } = event.lngLat;
+            try {
+                const address = await reverseGeocode(lng, lat);
+                document.getElementById('info').innerText = `Address: ${address}`;
+                addMarker(lng, lat)
+                map.flyTo({ center: [lng, lat] });
+            } catch (error) {
+                console.error('Error fetching reverse geocoding data:', error);
+                document.getElementById('info').innerText = 'Failed to get address';
+            }
+        });
+        // Function to clear all markers from the map
+        function clearMarkers() {
+            markers.forEach(marker => marker.remove());
+            markers = [];
+        }
+        // Function to add a marker to the map
+        function addMarker(lng, lat) {
+            const marker = new maplibregl.Marker()
+                .setLngLat([lng, lat])
+                .addTo(map);
+            markers.push(marker);
+        }
+    </script>
+</body>
+
+</html>
